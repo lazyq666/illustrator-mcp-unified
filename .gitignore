@@ -1,0 +1,16 @@
+node_modules/
+dist/
+generated/
+var/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+*.ai
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.zip
+*.tgz

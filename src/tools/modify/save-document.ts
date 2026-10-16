@@ -1,0 +1,90 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import { executeJsx } from '../../executor/jsx-runner.js';
+import { formatToolResult } from '../tool-executor.js';
+import { WRITE_IDEMPOTENT_ANNOTATIONS } from './shared.js';
+
+/**
+ * save_document — ドキュメントの上書き保存・別名保存
+ *
+ * @see https://ai-scripting.docsforadobe.dev/jsobjref/Document/ — Document.save(), Document.saveAs()
+ *
+ * JSX API:
+ *   Document.save() → void  (上書き保存)
+ *   Document.saveAs(saveIn: File [, options]) → void  (別名保存)
+ */
+const jsxCode = `
+var preflight = preflightChecks();
+if (preflight) {
+  writeResultFile(RESULT_PATH, preflight);
+} else {
+  try {
+    var params = readParamsFile(PARAMS_PATH);
+    var doc = app.activeDocument;
+    var mode = params.mode || "save";
+
+    if (mode === "save") {
+      doc.save();
+      writeResultFile(RESULT_PATH, { success: true, mode: "save" });
+    } else if (mode === "save_as") {
+      var savePath = params.path;
+      // Default path generation when path is omitted
+      if (!savePath) {
+        var dir;
+        try {
+          var docPath = doc.path ? doc.path.fsName : '';
+          if (docPath && docPath !== '/') {
+            dir = docPath;
+          } else {
+            dir = Folder.desktop.fsName;
+          }
+        } catch (e) {
+          dir = Folder.desktop.fsName;
+        }
+        var baseName = doc.name.replace(/\\.[^.]+$/, '').replace(/ /g, '-');
+        var sep = Folder.fs === 'Windows' ? '\\\\' : '/';
+        savePath = dir + sep + baseName + '.ai';
+        var counter = 2;
+        while (new File(savePath).exists) {
+          savePath = dir + sep + baseName + '_' + counter + '.ai';
+          counter++;
+        }
+      }
+      var saveFile = new File(savePath);
+      doc.saveAs(saveFile);
+      writeResultFile(RESULT_PATH, { success: true, mode: "save_as", path: savePath });
+    } else {
+      writeResultFile(RESULT_PATH, { error: true, message: "Unknown mode: " + mode });
+    }
+  } catch (e) {
+    writeResultFile(RESULT_PATH, { error: true, message: "save_document failed: " + e.message, line: e.line });
+  }
+}
+`;
+
+export function register(server: McpServer): void {
+  server.registerTool(
+    'save_document',
+    {
+      title: 'Save Document',
+      description:
+        'Save the active Illustrator document. Runs without activating Illustrator in default background mode; never invokes Computer Use.',
+      inputSchema: {
+        mode: z
+          .enum(['save', 'save_as'])
+          .optional()
+          .default('save')
+          .describe('save = overwrite, save_as = save to new path'),
+        path: z
+          .string()
+          .optional()
+          .describe('File path for save_as mode. If omitted, auto-generates in the same directory as the document (or ~/Desktop for unsaved documents)'),
+      },
+      annotations: WRITE_IDEMPOTENT_ANNOTATIONS,
+    },
+    async (params) => {
+      const result = await executeJsx(jsxCode, params, { activate: true });
+      return formatToolResult(result);
+    },
+  );
+}

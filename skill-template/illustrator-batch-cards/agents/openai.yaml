@@ -1,0 +1,4 @@
+interface:
+  display_name: "Illustrator 批量制卡"
+  short_description: "按角色数据批量替换模板文案与素材，保留独立图层并逐卡验收"
+  default_prompt: "使用 $illustrator-batch-cards，根据提供的 Illustrator 模板、角色数据和素材批量制作卡牌，并在重开文件后逐卡验收。"

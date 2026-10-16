@@ -1,0 +1,60 @@
+{
+  "name": "illustrator-mcp-unified",
+  "version": "1.8.0-local.1",
+  "description": "77 Illustrator MCP tools with background execution, trusted scripts and editable batch-card workflows. Tested on macOS.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "illustrator-mcp-unified": "dist/index.js"
+  },
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').cpSync('src/jsx','dist/jsx',{recursive:true})\" && node -e \"require('esbuild').buildSync({entryPoints:['src/index.ts'],bundle:true,platform:'node',format:'cjs',outfile:'dist/bundle.cjs',define:{'import.meta.url':'_importMetaUrl'},banner:{js:'const _importMetaUrl = require(\\\"url\\\").pathToFileURL(__filename).href;'}})\"",
+    "dev": "node -e \"require('fs').cpSync('src/jsx','dist/jsx',{recursive:true})\" && tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "configure": "node scripts/configure.mjs",
+    "verify": "node scripts/verify.mjs",
+    "check": "npm run build && npm test && npm run verify"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "illustrator",
+    "adobe",
+    "extendscript",
+    "jsx",
+    "design",
+    "svg"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lazyq666/illustrator-mcp-unified.git"
+  },
+  "homepage": "https://github.com/lazyq666/illustrator-mcp-unified#readme",
+  "bugs": {
+    "url": "https://github.com/lazyq666/illustrator-mcp-unified/issues"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.1",
+    "p-limit": "7.3.3",
+    "zod": "4.6.5",
+    "acorn": "8.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.8",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11",
+    "esbuild": "0.28.2"
+  },
+  "private": true,
+  "localRevision": "20261016.1"
+}

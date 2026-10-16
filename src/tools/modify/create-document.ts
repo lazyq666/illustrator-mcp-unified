@@ -1,0 +1,75 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import { executeJsx } from '../../executor/jsx-runner.js';
+import { formatToolResult } from '../tool-executor.js';
+import { invalidateAutoDetectCache } from '../session.js';
+import { WRITE_ANNOTATIONS } from './shared.js';
+
+/**
+ * create_document — 新規ドキュメントの作成
+ * @see https://ai-scripting.docsforadobe.dev/jsobjref/Documents/ — Documents.add(colorSpace, width, height)
+ */
+const jsxCode = `
+try {
+  var verErr = checkIllustratorVersion();
+  if (verErr) {
+    writeResultFile(RESULT_PATH, verErr);
+  } else {
+    var params = readParamsFile(PARAMS_PATH);
+    var w = params.width || 595.28;
+    var h = params.height || 841.89;
+    var colorMode = (params.color_mode === "cmyk")
+      ? DocumentColorSpace.CMYK
+      : DocumentColorSpace.RGB;
+
+    var doc = app.documents.add(colorMode, w, h);
+
+    // Set artboard to match requested size
+    doc.artboards[0].artboardRect = [0, h, w, 0];
+
+    writeResultFile(RESULT_PATH, {
+      success: true,
+      fileName: doc.name,
+      width: w,
+      height: h,
+      colorMode: (colorMode === DocumentColorSpace.CMYK) ? "CMYK" : "RGB"
+    });
+  }
+} catch (e) {
+  writeResultFile(RESULT_PATH, { error: true, message: "Failed to create document: " + e.message, line: e.line });
+}
+`;
+
+export function register(server: McpServer): void {
+  server.registerTool(
+    'create_document',
+    {
+      title: 'Create Document',
+      description:
+        'Create a new Illustrator document. Runs without activating Illustrator in default background mode; never invokes Computer Use.',
+      inputSchema: {
+        width: z
+          .number()
+          .optional()
+          .default(595.28)
+          .describe('Document width in points (default: A4 width 595.28pt)'),
+        height: z
+          .number()
+          .optional()
+          .default(841.89)
+          .describe('Document height in points (default: A4 height 841.89pt)'),
+        color_mode: z
+          .enum(['rgb', 'cmyk'])
+          .optional()
+          .default('rgb')
+          .describe('Color mode (default: rgb)'),
+      },
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async (params) => {
+      const result = await executeJsx(jsxCode, params, { activate: true });
+      invalidateAutoDetectCache();
+      return formatToolResult(result);
+    },
+  );
+}
