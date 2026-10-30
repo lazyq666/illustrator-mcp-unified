@@ -13,6 +13,13 @@ export async function atomicJSON(path: string, value: unknown) {
   await fs.rename(temp, path);
 }
 
+/** Consecutive [start, end) card ranges, one native run each. */
+export function cardChunks(total: number, size: number): Array<{ start: number; end: number }> {
+  const chunks = [];
+  for (let start = 0; start < total; start += size) chunks.push({ start, end: Math.min(start + size, total) });
+  return chunks;
+}
+
 export async function prepareBatch(input: BatchPlan, directory: string): Promise<BatchPlan> {
   const plan = batchSchema.parse(input);
   for (const file of [plan.template_path, ...plan.cards.flatMap(c => [...c.images.map(i => i.file_path), ...(c.name_art ? [c.name_art.pdf_path] : [])])]) {

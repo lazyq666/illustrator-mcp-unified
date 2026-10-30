@@ -127,6 +127,13 @@ describe('writeAppleScript', () => {
     expect(content).not.toContain('isRunning');
   });
 
+  it('AppleEvent の待ち時間をプロセスのタイムアウトに合わせる', async () => {
+    const scpt = path.join(tmpDir, 'run.scpt');
+    await writeAppleScript(scpt, '/tmp/script.jsx', { timeoutSeconds: 210.5 });
+    const content = await fs.readFile(scpt, 'utf-8');
+    expect(content).toContain('with timeout of 211 seconds\n    do javascript of file "/tmp/script.jsx"\n  end timeout');
+  });
+
   it('activate オプションが反映される', async () => {
     const scpt = path.join(tmpDir, 'run.scpt');
     await writeAppleScript(scpt, '/tmp/script.jsx', { activate: true });

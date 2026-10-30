@@ -319,23 +319,44 @@ function cardWriteStatus(path, data) {
   file.write(jsonStringify(data));file.close();
 }
 
-function cardSave(doc) {
+// The PDF-compatible copy roughly doubles the file and is rebuilt on every save,
+// so intermediate chunk saves leave it out.
+function cardSave(doc, pdfCompatible) {
   var options=new IllustratorSaveOptions();
-  options.pdfCompatible=true;options.compressed=true;options.embedLinkedFiles=false;
+  options.pdfCompatible=!!pdfCompatible;options.compressed=true;options.embedLinkedFiles=false;
   doc.saveAs(doc.fullName,options);
 }
 
+// Card parent layers are added on top, so the template stays at the bottom of
+// the layer list across chunks. Later chunks check the recorded names.
+function cardTemplateLayers(doc, chunk) {
+  var count=chunk.template_layer_names ? chunk.template_layer_names.length : doc.layers.length;
+  var start=doc.layers.length-count, layers=[];
+  if(start<0)throw new Error("TEMPLATE_LAYERS_CHANGED");
+  for(var i=start;i<doc.layers.length;i++) {
+    if(chunk.template_layer_names && doc.layers[i].name!==chunk.template_layer_names[i-start])throw new Error("TEMPLATE_LAYERS_CHANGED: "+doc.layers[i].name);
+    layers.push(doc.layers[i]);
+  }
+  return layers;
+}
+
+// One native run generates cards [chunk.start, chunk.end), saves and closes the
+// output. Closing between runs releases undo history and DOM references; the
+// first run preflights the whole plan, the last removes the template.
 function cardBatch(plan) {
-  var output=new File(plan.output_path), doc=null, completed=[], phase="open", current=null;
+  var chunk=plan.chunk || {start:0,end:plan.cards.length};
+  var first=chunk.start===0, last=chunk.end===plan.cards.length;
+  var output=new File(plan.output_path), doc=null, completed=(chunk.completed_before || []).slice(), pending=[], phase="open", current=null;
   var beforeDoc=app.documents.length ? app.activeDocument : null;
   try {
     doc=app.open(output);
     var templateRect=doc.artboards[plan.template_artboard || 0].artboardRect;
     var width=templateRect[2]-templateRect[0],height=templateRect[1]-templateRect[3];
-    var sources=[], originalArtboards=doc.artboards.length;
-    for(var li=0;li<doc.layers.length;li++)sources.push(doc.layers[li]);
+    var sources=cardTemplateLayers(doc,chunk), names=[];
+    var originalArtboards=first ? doc.artboards.length : chunk.original_artboards;
+    for(var li=0;li<sources.length;li++)names.push(sources[li].name);
     // Preflight every selector before generating the first card.
-    for(var ci=0;ci<plan.cards.length;ci++) {
+    for(var ci=0;first && ci<plan.cards.length;ci++) {
       var pre=plan.cards[ci];
       for(var ti=0;ti<(pre.texts || []).length;ti++) if(cardItem(doc,pre.texts[ti].item_name).typename!=="TextFrame")throw new Error("TEXT_TARGET_INVALID");
       for(var ii=0;ii<(pre.images || []).length;ii++)cardItem(doc,pre.images[ii].item_name);
@@ -346,9 +367,9 @@ function cardBatch(plan) {
       }
       if(pre.name_art)cardLayer(doc,pre.name_art.layer_path);
     }
-    for(ci=0;ci<plan.cards.length;ci++) {
+    for(ci=chunk.start;ci<chunk.end;ci++) {
       current=plan.cards[ci];phase="generate";
-      cardWriteStatus(plan.progress_path,{state:"running",phase:phase,current:current.id,completed:completed});
+      cardWriteStatus(plan.progress_path,{state:"running",phase:phase,current:current.id,completed:completed,unsaved:pending});
       var label=current.id+" "+current.name;
       var parent=doc.layers.add();parent.name=label;
       var col=ci % (plan.columns || 4),row=Math.floor(ci/(plan.columns || 4));
@@ -376,17 +397,21 @@ function cardBatch(plan) {
           }
         };})(art,target,box));
       }
-      phase="save_checkpoint";cardSave(doc);completed.push(current.id);
-      cardWriteStatus(plan.progress_path,{state:"running",phase:phase,current:current.id,completed:completed});
+      pending.push(current.id);
     }
-    phase="remove_template";
-    for(li=0;li<sources.length;li++)cardUnlock(sources[li],(function(layer){return function(){layer.remove();};})(sources[li]));
-    for(var ai=originalArtboards-1;ai>=0;ai--)doc.artboards[ai].remove();
-    cardSave(doc);doc.close(SaveOptions.DONOTSAVECHANGES);doc=null;
-    var result={state:"generated",completed:completed,output_path:output.fsName,visual_verified:false};
+    if(last) {
+      phase="remove_template";
+      for(li=0;li<sources.length;li++)cardUnlock(sources[li],(function(layer){return function(){layer.remove();};})(sources[li]));
+      for(var ai=originalArtboards-1;ai>=0;ai--)doc.artboards[ai].remove();
+    }
+    phase="save_checkpoint";cardWriteStatus(plan.progress_path,{state:"running",phase:phase,current:current ? current.id : null,completed:completed,unsaved:pending});
+    cardSave(doc,last && plan.pdf_compatible!==false);completed=completed.concat(pending);pending=[];
+    doc.close(SaveOptions.DONOTSAVECHANGES);doc=null;
+    var result={state:last ? "generated" : "chunk_saved",completed:completed,output_path:output.fsName,visual_verified:false,
+      template_layer_names:names,original_artboards:originalArtboards};
     cardWriteStatus(plan.progress_path,result);return result;
   } catch(e) {
-    var problem={state:"failed",phase:phase,current:current ? current.id : null,completed:completed,output_path:output.fsName,error:String(e.message || e),line:e.line};
+    var problem={state:"failed",phase:phase,current:current ? current.id : null,completed:completed,unsaved:pending,output_path:output.fsName,error:String(e.message || e),line:e.line};
     try{cardWriteStatus(plan.progress_path,problem);}catch(ignoreLog){}
     // Do not save a half-written card over the latest checkpoint or discard its
     // live document: preserve both for inspection; never replay automatically.

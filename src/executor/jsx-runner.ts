@@ -233,7 +233,8 @@ async function executeViaTransport(
     assertExtendScriptSyntax(fullJsx);
     await writeJsx(files.scriptPath, fullJsx);
     if (transport === 'osascript') {
-      await writeAppleScript(files.runnerPath, files.scriptPath, { activate: effectiveActivation(activate), appPath: getAppPath() });
+      // The process timeout below stays the authority; the AppleEvent must outlive it.
+      await writeAppleScript(files.runnerPath, files.scriptPath, { activate: effectiveActivation(activate), appPath: getAppPath(), timeoutSeconds: timeout / 1000 + 30 });
     } else {
       await writePowerShellScript(files.runnerPath, files.scriptPath, { activate: effectiveActivation(activate), appPath: getAppPath() });
     }

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { backgroundMode, effectiveActivation, assertBackgroundScript } from '../../src/executor/background-policy.js';
 import { acquireLease, readLease, reserveJob, releaseJob } from '../../src/executor/execution-lease.js';
 import { batchSchema } from '../../src/cards/schema.js';
-import { prepareBatch } from '../../src/cards/jobs.js';
+import { cardChunks, prepareBatch } from '../../src/cards/jobs.js';
 import { cardScript } from '../../src/cards/native.js';
 import { runInNewContext } from 'node:vm';
 
@@ -54,6 +54,57 @@ describe('background execution contract', () => {
   });
 });
 
+describe('chunked batch generation', () => {
+  // Minimal Illustrator DOM: layers added on top, artboards appended, saves and closes recorded.
+  function fakeHost() {
+    const saves: boolean[] = []; let closes = 0;
+    function layer(name: string, parent: any): any {
+      const l: any = { typename:'Layer', name, parent, locked:false, visible:true, layers:[], pageItems:[], absoluteZOrderPosition:0 };
+      l.layers.add = () => { const c = layer('', l); l.layers.unshift(c); return c; };
+      l.remove = () => { const s = l.parent.layers; s.splice(s.indexOf(l), 1); };
+      return l;
+    }
+    const doc: any = { typename:'Document', fullName:{ fsName:'/out.ai' }, activeLayer:null, layers:[], placedItems:[] };
+    doc.layers.add = () => { const c = layer('', doc); doc.layers.unshift(c); return c; };
+    for (const name of ['01 文案', '02 背景']) doc.layers.push(layer(name, doc));
+    doc.artboards = [{ artboardRect:[0,100,60,0], name:'template' }];
+    doc.artboards.add = (rect: number[]) => { const b: any = { artboardRect:rect, name:'' }; doc.artboards.push(b); return b; };
+    doc.artboards.forEach((b: any) => { b.remove = () => doc.artboards.splice(doc.artboards.indexOf(b), 1); });
+    doc.saveAs = (_f: unknown, o: any) => { saves.push(o.pdfCompatible); };
+    doc.close = () => { closes++; };
+    const context: any = {
+      app:{ documents:[], open:() => doc }, SaveOptions:{ DONOTSAVECHANGES:0 },
+      IllustratorSaveOptions:function(){}, File:function(this: any, p: string){ this.fsName = p; },
+      jsonStringify:(v: unknown) => JSON.stringify(v),
+    };
+    return { doc, context, saves, closes:() => closes };
+  }
+  it('reopens one output per chunk, keeps the template until the last chunk and saves PDF compatibility once', () => {
+    const { doc, context, saves, closes } = fakeHost();
+    const library = readFileSync(new URL('../../src/jsx/helpers/cards.jsx', import.meta.url), 'utf8');
+    const cards = ['a','b','c','d','e'].map((id, i) => ({ id, name:'卡'+i }));
+    let generated: any = { completed:[] };
+    for (const { start, end } of cardChunks(cards.length, 2)) {
+      context.plan = { output_path:'/out.ai', cards, columns:4, pdf_compatible:true,
+        chunk:{ start, end, completed_before:generated.completed, template_layer_names:generated.template_layer_names, original_artboards:generated.original_artboards } };
+      generated = runInNewContext(library + ';cardBatch(plan);', context);
+    }
+    expect(generated.state).toBe('generated'); expect(Array.from(generated.completed)).toEqual(['a','b','c','d','e']);
+    expect(saves).toEqual([false, false, true]); expect(closes()).toBe(3);
+    expect(doc.layers.map((l: any) => l.name)).toEqual(['e 卡4','d 卡3','c 卡2','b 卡1','a 卡0']);
+    expect(doc.layers[0].layers.map((l: any) => l.name)).toEqual(['01 文案','02 背景']);
+    expect(doc.artboards.map((b: any) => b.name)).toEqual(['a 卡0','b 卡1','c 卡2','d 卡3','e 卡4']);
+  });
+  it('refuses a later chunk when the template layers at the bottom were changed', () => {
+    const { doc, context } = fakeHost();
+    const library = readFileSync(new URL('../../src/jsx/helpers/cards.jsx', import.meta.url), 'utf8');
+    doc.layers[1].name = '改过的背景';
+    context.plan = { output_path:'/out.ai', cards:[{ id:'a', name:'x' },{ id:'b', name:'y' }],
+      chunk:{ start:1, end:2, completed_before:['a'], template_layer_names:['01 文案','02 背景'], original_artboards:1 } };
+    expect(() => runInNewContext(library + ';cardBatch(plan);', context)).toThrow('TEMPLATE_LAYERS_CHANGED');
+  });
+});
+
 describe('cross-process lease and uncertain completion', () => {
   it('reserves the whole batch, including preparation and independent validation', async () => {
     vi.stubEnv('ILLUSTRATOR_MCP_STATE_DIR',await temp());vi.stubEnv('ILLUSTRATOR_MCP_KEEP_AWAKE','0');
@@ -92,6 +143,12 @@ describe('batch preparation', () => {
     expect(prepared.cards[0].images[0].file_path).toContain('/Links/');
     expect(prepared.cards[0].images[1].file_path).toBe(img);
     await expect(prepareBatch(plan,job)).rejects.toMatchObject({code:'EEXIST'});
+  });
+  it('defaults to chunks of four and a PDF-compatible final save', () => {
+    const plan=batchSchema.parse({template_path:'/tmp/t.ai',output_path:'/tmp/o.ai',cards:[{id:'01',name:'a'}]});
+    expect(plan.chunk_size).toBe(4);expect(plan.pdf_compatible).toBe(true);
+    expect(cardChunks(10,4)).toEqual([{start:0,end:4},{start:4,end:8},{start:8,end:10}]);
+    expect(cardChunks(3,4)).toEqual([{start:0,end:3}]);
   });
   it('rejects duplicate ids and inverted bounds before generating anything', () => {
     expect(()=>batchSchema.parse({template_path:'/tmp/t.ai',output_path:'/tmp/o.ai',cards:[{id:'01',name:'a'},{id:'01',name:'b'}]})).toThrow();

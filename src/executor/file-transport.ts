@@ -49,11 +49,15 @@ export async function writeJsx(scriptPath: string, jsxCode: string): Promise<voi
 export async function writeAppleScript(
   scptPath: string,
   scriptPath: string,
-  options?: { activate?: boolean; appPath?: string },
+  options?: { activate?: boolean; appPath?: string; timeoutSeconds?: number },
 ): Promise<void> {
   const escaped = scriptPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const activateLine = effectiveActivation(options?.activate) ? '\n  activate' : '';
-  const jsxLine = `  do javascript of file "${escaped}"`;
+  // Without an explicit block, AppleEvents give up after 120 s while Illustrator
+  // keeps running the script, so long jobs would be reported as unconfirmed.
+  const jsxLine = options?.timeoutSeconds
+    ? `  with timeout of ${Math.ceil(options.timeoutSeconds)} seconds\n    do javascript of file "${escaped}"\n  end timeout`
+    : `  do javascript of file "${escaped}"`;
 
   let script: string;
   if (options?.appPath) {

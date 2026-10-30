@@ -36,6 +36,10 @@ export const batchShape = {
   columns: z.number().int().min(1).max(20).default(4), gap_pt: z.number().min(0).max(500).default(20),
   cards: z.array(cardSchema).min(1).max(100),
   expected_sublayers: z.array(z.string()).optional(),
+  chunk_size: z.number().int().min(1).max(50).default(4)
+    .describe('Cards per native run. Each run reopens the output, saves and closes it, releasing Illustrator undo history and memory'),
+  pdf_compatible: z.boolean().default(true)
+    .describe('PDF compatibility for the final save only; intermediate chunk saves omit it'),
 };
 export const batchSchema = z.object(batchShape).superRefine((plan, ctx) => {
   if (new Set(plan.cards.map(c => c.id)).size !== plan.cards.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Duplicate card ids' });

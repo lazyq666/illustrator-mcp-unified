@@ -50,7 +50,7 @@ export function register(server: McpServer) {
   }, async params => formatToolResult(await executeCardScript('var doc=cardDocument(params.document_path);var style=params.style;style.face_name=params.face_name;writeResultFile(RESULT_PATH,cardBacking(doc,cardLayer(doc,params.root_layer_path),style));',params)));
 
   server.registerTool('batch_cards', {
-    description: 'Start a detached background card job from a saved normalized AI template and confirmed content. Creates a new output, copies linked images into Links, clones complete layers, replaces named text/images, imports optional PDF name paths and builds backing. Saves each card, removes template copies, reopens for structural checks and exports previews. No image downscaling or UI fallback. Return is job acceptance, not completion; poll get_batch_status and visually inspect previews. One simple card template per source document; verify the template first.',
+    description: 'Start a detached background card job from a saved normalized AI template and confirmed content. Creates a new output, copies linked images into Links, clones complete layers, replaces named text/images, imports optional PDF name paths and builds backing. Works in chunks of chunk_size cards: each chunk reopens the single output file, saves it and closes it to release memory. Removes template copies, reopens for structural checks and exports previews. No image downscaling or UI fallback. Return is job acceptance, not completion; poll get_batch_status and visually inspect previews. One simple card template per source document; verify the template first.',
     inputSchema: batchShape, annotations: write,
   }, async params => formatToolResult(await startBatch(params)));
 
