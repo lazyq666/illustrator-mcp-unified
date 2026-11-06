@@ -1,28 +1,52 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import * as fs from 'node:fs/promises';
 import { runTrustedScript } from '../../executor/trusted-script.js';
 import { backgroundMode } from '../../executor/background-policy.js';
-import { readLease, readJobReservation, stateDirectory, recoverExecution, executionRecoveryProof } from '../../executor/execution-lease.js';
+import { readLease, stateDirectory, recoverExecution, abandonExecution, describeLease, describeJobReservation, releaseStaleJob } from '../../executor/execution-lease.js';
 import { executeJsx } from '../../executor/jsx-runner.js';
 import { formatToolResult } from '../tool-executor.js';
+import { registeredToolNames } from '../../executor/tool-context.js';
 import { executeCardScript } from '../../cards/native.js';
 import { absolutePath, layerPath, bounds, backingSchema, imageSchema, batchShape, cardSchema } from '../../cards/schema.js';
 import { startBatch, batchStatus } from '../../cards/jobs.js';
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
+const serverStarted = new Date();
+
+/** Which code this server process runs. A rebuild after start means clients still see the old tools. */
+export async function serverStatus(entry = process.argv[1], started = serverStarted) {
+  const base = { pid: process.pid, started_at: started.toISOString(), entry: entry ?? null };
+  try {
+    const modified = (await fs.stat(entry)).mtime;
+    const restartRequired = modified.getTime() > started.getTime();
+    return { ...base, entry_modified_at: modified.toISOString(), restart_required: restartRequired,
+      ...(restartRequired ? { note: 'The server entry was rebuilt after this process started. Restart the MCP server and open a new client session to load the new code and tool list.' } : {}) };
+  } catch { return { ...base, entry_modified_at: null, restart_required: null }; }
+}
 const write = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 export function register(server: McpServer) {
   server.registerTool('get_runtime_status', {
-    description: 'Read background policy and cross-process execution ownership without sending a script to Illustrator. An uncertain execution must not be replayed. No Computer Use.', inputSchema: {}, annotations: readOnly,
+    description: 'Read background policy and cross-process execution ownership without sending a script to Illustrator. Shows which tool/batch owns Illustrator, when it started, whether its script began, and any recovery proof. server.restart_required=true means this MCP process predates the current build. An uncertain execution must not be replayed. No Computer Use.', inputSchema: {}, annotations: readOnly,
   }, async () => {
     const execution = await readLease();
-    return formatToolResult({ version: '1.8.0-local.1', revision: '20261016.1', background: backgroundMode(), computer_use_fallback: false, state_directory: stateDirectory(), execution, recovery_proof: execution ? await executionRecoveryProof(execution) : null, batch: await readJobReservation() });
+    return formatToolResult({ version: '1.8.0-local.2', revision: '20261105.1', server: await serverStatus(), tool_count: registeredToolNames().length, background: backgroundMode(), computer_use_fallback: false, state_directory: stateDirectory(), execution: execution ? { ...(await describeLease(execution)), record: execution } : null, batch: await describeJobReservation() });
   });
 
   server.registerTool('recover_execution', {
-    description: 'Recover an uncertain execution only after a valid native completion receipt or a recognized legacy native compile failure. Requires the exact execution_id from get_runtime_status. Archives the evidence, releases only that lock, and never sends a script, cancels, or retries Illustrator work. Refuses running or unproven timeout states.',
+    description: 'Release an uncertain execution with evidence: a valid native completion receipt, a recognized legacy native compile failure, or proof that the Illustrator process which received the script has since exited/restarted (outcome then reported as unknown). Requires the exact execution_id from get_runtime_status. Archives the evidence, releases only that lock, and never sends a script, cancels, or retries Illustrator work.',
     inputSchema: { execution_id: z.string().uuid() }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, async ({ execution_id }) => formatToolResult(await recoverExecution(execution_id)));
+
+  server.registerTool('abandon_execution', {
+    description: 'ONLY when the user has explicitly asked to clear a stale Illustrator occupancy that recover_execution cannot prove. Requires the exact execution_id from get_runtime_status and the user\'s reason. Moves the lock into an archive (never deletes), records that the native outcome is unknown, marks a linked batch abandoned, and does not mark completion, cancel or replay anything. Refuses while the owning MCP process is still waiting on Illustrator.',
+    inputSchema: { execution_id: z.string().uuid(), reason: z.string().min(3).describe('Why the user is giving up on this execution, in their words') }, annotations: write,
+  }, async ({ execution_id, reason }) => formatToolResult(await abandonExecution(execution_id, reason)));
+
+  server.registerTool('release_stale_batch', {
+    description: 'Release a batch_cards reservation whose detached worker is no longer running (for example it was killed). Requires the exact job_id from get_runtime_status. Refuses while the worker is alive or an execution lock exists. Never restarts the batch.',
+    inputSchema: { job_id: z.string().uuid() }, annotations: write,
+  }, async ({ job_id }) => formatToolResult(await releaseStaleJob(job_id)));
 
   server.registerTool('run_script', {
     description: 'Run trusted ExtendScript directly in the shared background executor. Supply script or an existing UTF-8 .jsx script_path, not both. Use ES3-compatible syntax (no E4X or preprocessor directives); quote reserved property names. Syntax is checked before native execution. Return plain data with return; params contains JSON input. JSON compatibility is provided. UI, clipboard and dynamic script requests are rejected in background mode. This is not a security sandbox. Use batch_cards for long jobs; never replay an unconfirmed timeout.',
@@ -55,7 +79,7 @@ export function register(server: McpServer) {
   }, async params => formatToolResult(await startBatch(params)));
 
   server.registerTool('get_batch_status', {
-    description: 'Read a background card job and its per-card progress, prepared plan, log and preview paths. ready_for_visual_review means structural checks passed, not visual approval. Never automatically restart failed or unconfirmed jobs.',
+    description: 'Read a background card job: effective_state (authoritative), raw status, last progress checkpoint, prepared plan, log and preview paths. progress.completed lists checkpoint-saved cards, not validated deliveries. ready_for_visual_review means structural checks passed, not visual approval. Never automatically restart failed or unconfirmed jobs.',
     inputSchema: { job_id: z.string().uuid() }, annotations: readOnly,
   }, async ({ job_id }) => formatToolResult(await batchStatus(job_id)));
 

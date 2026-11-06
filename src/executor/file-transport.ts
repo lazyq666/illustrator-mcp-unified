@@ -20,8 +20,15 @@ export interface TempFiles {
   resultPath: string;
 }
 
+/**
+ * With a configured state directory, run files live under <state>/runs so that the script,
+ * params and a late result of an unconfirmed execution survive macOS temp-folder cleanup.
+ */
 export async function ensureTmpDir(): Promise<void> {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'illustrator-mcp-'));
+  const state = process.env.ILLUSTRATOR_MCP_STATE_DIR;
+  const parent = state ? path.join(state, 'runs') : os.tmpdir();
+  await fs.mkdir(parent, { recursive: true, mode: 0o700 });
+  tmpDir = await fs.mkdtemp(path.join(parent, 'illustrator-mcp-'));
 }
 
 export function createTempFiles(): TempFiles {

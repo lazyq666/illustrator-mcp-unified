@@ -5,6 +5,12 @@ import { parse } from 'acorn';
  * allowReserved:'never' matters: ES3 otherwise accepts reserved property names.
  */
 export function assertExtendScriptSyntax(source: string, label = '<generated JSX>'): void {
+  // ExtendScript reads "//@name" and "// @name" at line start as directives and fails to compile
+  // unknown ones (Error 8), which acorn sees as ordinary comments.
+  const directive = source.split('\n').findIndex((line) => /^\s*\/\/\s*@/.test(line));
+  if (directive >= 0) {
+    throw new Error(`SCRIPT_SYNTAX_ERROR: ${label}:${directive + 1}:1: Line comments beginning with "@" are ExtendScript preprocessor directives. Remove the "@" or use a block comment. No script was sent to Illustrator.`);
+  }
   try {
     parse(source, { ecmaVersion: 3, allowReserved: 'never', allowReturnOutsideFunction: true, locations: true });
   } catch (error) {

@@ -1,55 +1,21 @@
 # 工具清单
 
-当前 MCP 实际注册 **77** 个工具：67 个原有工具，加上 10 个统一执行与制卡工具。以下说明来自工具本身，参数以客户端读取的 MCP 定义为准。
+当前 MCP 实际注册 **81** 个工具。以下说明来自工具本身，参数以客户端读取的 MCP 定义为准。
 
-后台策略可能拒绝依赖界面或剪贴板的操作；工具已注册不等于每项操作都通过后台验证。
-
-## 统一执行与批量制卡
-
-### `get_runtime_status`
-
-Read background policy and cross-process execution ownership without sending a script to Illustrator. An uncertain execution must not be replayed. No Computer Use.
-
-### `recover_execution`
-
-Recover an uncertain execution only after a valid native completion receipt or a recognized legacy native compile failure. Requires the exact execution_id from get_runtime_status. Archives the evidence, releases only that lock, and never sends a script, cancels, or retries Illustrator work. Refuses running or unproven timeout states.
-
-### `run_script`
-
-Run trusted ExtendScript directly in the shared background executor. Supply script or an existing UTF-8 .jsx script_path, not both. Use ES3-compatible syntax (no E4X or preprocessor directives); quote reserved property names. Syntax is checked before native execution. Return plain data with return; params contains JSON input. JSON compatibility is provided. UI, clipboard and dynamic script requests are rejected in background mode. This is not a security sandbox. Use batch_cards for long jobs; never replay an unconfirmed timeout.
-
-### `duplicate_layer_tree`
-
-Copy a complete layer hierarchy into a new parent layer in the specified open document, preserving item order, clipping groups and child layer state. Native document coordinates in points. Refuses a duplicate target parent.
-
-### `import_pdf_as_paths`
-
-Open a prepared outlined vector PDF and copy actual paths into an open target document, retaining compound paths and holes. No clipboard, linked PDF or raster substitute. Rejects source PDFs already open by the user. Bounds use native document points.
-
-### `replace_masked_image`
-
-Replace a named raster inside its existing clipping group while preserving the image rectangle and stacking. Explicitly choose linked or embedded. Rejects rotated/sheared/mirrored images and aspect mismatches before replacement; use a template-specific script for them.
-
-### `build_name_backing`
-
-Duplicate an editable name face behind itself, apply a template gradient or explicit RGB stops, and attach a live Offset Path effect. Preserves face holes and separate face/backing objects. Bounds and thickness are native document points; visual review is still required.
-
-### `batch_cards`
-
-Start a detached background card job from a saved normalized AI template and confirmed content. Creates a new output, copies linked images into Links, clones complete layers, replaces named text/images, imports optional PDF name paths and builds backing. Works in chunks of chunk_size cards: each chunk reopens the single output file, saves it and closes it to release memory. Removes template copies, reopens for structural checks and exports previews. No image downscaling or UI fallback. Return is job acceptance, not completion; poll get_batch_status and visually inspect previews. One simple card template per source document; verify the template first.
-
-### `get_batch_status`
-
-Read a background card job and its per-card progress, prepared plan, log and preview paths. ready_for_visual_review means structural checks passed, not visual approval. Never automatically restart failed or unconfirmed jobs.
-
-### `validate_cards`
-
-Independently reopen a saved, closed AI output, check card/layer/text/image/path correspondence, and optionally export artboard previews without the clipboard. This tool does not perform visual judgment. Use the prepared plan from get_batch_status so packaged link paths match.
-
-## 原有工具
-
-| 工具 | 说明 |
+| 工具 | 用途 |
 | --- | --- |
+| `get_runtime_status` | Read background policy and cross-process execution ownership without sending a script to Illustrator. Shows which tool/batch owns Illustrator, when it started, whether its script began, and any recovery proof. server.restart_required=true means this MCP process predates the current build. An uncertain execution must not be replayed. No Computer Use. |
+| `recover_execution` | Release an uncertain execution with evidence: a valid native completion receipt, a recognized legacy native compile failure, or proof that the Illustrator process which received the script has since exited/restarted (outcome then reported as unknown). Requires the exact execution_id from get_runtime_status. Archives the evidence, releases only that lock, and never sends a script, cancels, or retries Illustrator work. |
+| `abandon_execution` | ONLY when the user has explicitly asked to clear a stale Illustrator occupancy that recover_execution cannot prove. Requires the exact execution_id from get_runtime_status and the user's reason. Moves the lock into an archive (never deletes), records that the native outcome is unknown, marks a linked batch abandoned, and does not mark completion, cancel or replay anything. Refuses while the owning MCP process is still waiting on Illustrator. |
+| `release_stale_batch` | Release a batch_cards reservation whose detached worker is no longer running (for example it was killed). Requires the exact job_id from get_runtime_status. Refuses while the worker is alive or an execution lock exists. Never restarts the batch. |
+| `run_script` | Run trusted ExtendScript directly in the shared background executor. Supply script or an existing UTF-8 .jsx script_path, not both. Use ES3-compatible syntax (no E4X or preprocessor directives); quote reserved property names. Syntax is checked before native execution. Return plain data with return; params contains JSON input. JSON compatibility is provided. UI, clipboard and dynamic script requests are rejected in background mode. This is not a security sandbox. Use batch_cards for long jobs; never replay an unconfirmed timeout. |
+| `duplicate_layer_tree` | Copy a complete layer hierarchy into a new parent layer in the specified open document, preserving item order, clipping groups and child layer state. Native document coordinates in points. Refuses a duplicate target parent. |
+| `import_pdf_as_paths` | Open a prepared outlined vector PDF and copy actual paths into an open target document, retaining compound paths and holes. No clipboard, linked PDF or raster substitute. Rejects source PDFs already open by the user. Bounds use native document points. |
+| `replace_masked_image` | Replace a named raster inside its existing clipping group while preserving the image rectangle and stacking. Explicitly choose linked or embedded. Rejects rotated/sheared/mirrored images and aspect mismatches before replacement; use a template-specific script for them. |
+| `build_name_backing` | Duplicate an editable name face behind itself, apply a template gradient or explicit RGB stops, and attach a live Offset Path effect. Preserves face holes and separate face/backing objects. Bounds and thickness are native document points; visual review is still required. |
+| `batch_cards` | Start a detached background card job from a saved normalized AI template and confirmed content. Creates a new output, copies linked images into Links, clones complete layers, replaces named text/images, imports optional PDF name paths and builds backing. Works in chunks of chunk_size cards: each chunk reopens the single output file, saves it and closes it to release memory. Removes template copies, reopens for structural checks and exports previews. No image downscaling or UI fallback. Return is job acceptance, not completion; poll get_batch_status and visually inspect previews. One simple card template per source document; verify the template first. |
+| `get_batch_status` | Read a background card job: effective_state (authoritative), raw status, last progress checkpoint, prepared plan, log and preview paths. progress.completed lists checkpoint-saved cards, not validated deliveries. ready_for_visual_review means structural checks passed, not visual approval. Never automatically restart failed or unconfirmed jobs. |
+| `validate_cards` | Independently reopen a saved, closed AI output, check card/layer/text/image/path correspondence, and optionally export artboard previews without the clipboard. This tool does not perform visual judgment. Use the prepared plan from get_batch_status so packaged link paths match. |
 | `get_document_info` | Get document metadata |
 | `get_artboards` | Get all artboard information |
 | `get_layers` | Get layer structure as a tree |
@@ -84,7 +50,9 @@ Independently reopen a saved, closed AI output, check card/layer/text/image/path
 | `convert_to_outlines` | Convert text to outlines. Runs without activating Illustrator in default background mode; never invokes Computer Use. |
 | `assign_color_profile` | Assign (tag) a color profile to the document. WARNING: This only changes the profile tag — it does NOT convert color values (ICC conversion). For full conversion, use Edit > Convert to Profile in Illustrator. Runs without activating Illustrator in default background mode; never invokes Computer Use. |
 | `place_image` | Place a raster or PDF image file (PNG, JPG, TIFF, PSD, PDF, etc.) into the document as a linked or embedded image. SVG is NOT supported here because PlacedItems produces a non-editable linked artwork — use import_svg_as_editable instead to bring SVG content in as editable paths/text. Runs without activating Illustrator in default background mode; never invokes Computer Use. |
-| `import_svg_as_editable` | Import an SVG file into the active document as editable Illustrator paths/text/groups (NOT as a linked image). Internally opens the SVG as a temporary document, duplicates its contents into the target document, then closes the source. Use this instead of place_image for SVG. Runs without activating Illustrator in default background mode; never invokes Computer Use. |
+| `import_svg_as_editable` | Import an SVG file into the active document as editable Illustrator paths/text/groups (NOT as a linked image). Opens the SVG, copies its top-level items into the target document, then closes the source. Use anchor="source_artboard" to land the SVG artboard exactly on a target artboard (glow outside the artboard does not shift it) and clip_to_artboard to crop to it. Without x/y, fit_to_artboard or anchor=source_artboard the art keeps the coordinates from the SVG (result.placement says which rule applied). Returns source object counts and whether imported path counts match. Use assemble_svgs for many SVGs. Use this instead of place_image for SVG. Runs without activating Illustrator in default background mode; never invokes Computer Use. |
+| `assemble_svgs` | Place many SVG files as editable native art in one Illustrator run. Each SVG artboard lands exactly on an existing or newly created artboard (overflowing glow does not shift it), optionally clipped to it; only top-level items are copied, with the target document active. By default rejects SVGs with raster/placed/plugin/mesh content, saves the document, and reports per-item source vs imported path counts. reopen_verify closes and reopens the saved file and counts native objects. Optional per-item PNG export (transparent plus white twin). Stops at the first failing item and names what was already placed. Native coordinates in points. No Computer Use. |
+| `inspect_svg` | Classify SVG files without Illustrator: vector, vector_with_filters, mixed (vector plus <image>), raster_only (an image wrapped in SVG) or empty, with counts of shapes, images, filters, gradients (including transparent stops), masks and text. Use before treating an .svg as reusable editable vector art or before assemble_svgs/import_svg_as_editable. Text-level scan, not a renderer. |
 | `resize_for_variation` | Create size variations from a source artboard. Duplicates all objects and scales/repositions them proportionally to fit target sizes. Limitations: no text reflow, effects/strokes scale with objects but may need manual adjustment, proportional placement only (not smart layout). |
 | `align_objects` | Align and/or distribute multiple objects by their UUIDs |
 | `replace_color` | Find and replace colors across the document or within a specific layer. Limitations: SpotColor and GrayColor matching not supported. Cross-colorspace matching (e.g. RGB→CMYK) not possible — from_color and to_color must use the same color type as the target objects. |

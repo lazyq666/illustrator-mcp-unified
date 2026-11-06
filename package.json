@@ -1,7 +1,7 @@
 {
   "name": "illustrator-mcp-unified",
-  "version": "1.8.0-local.1",
-  "description": "77 Illustrator MCP tools with background execution, trusted scripts and editable batch-card workflows. Tested on macOS.",
+  "version": "1.8.0-local.2",
+  "description": "81 Illustrator MCP tools with background execution, trusted scripts and editable batch-card workflows. Tested on macOS.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -56,5 +56,5 @@
     "esbuild": "0.28.2"
   },
   "private": true,
-  "localRevision": "20261016.1"
+  "localRevision": "20261105.1"
 }

@@ -74,11 +74,21 @@ export async function startBatch(input: unknown) {
   } catch(error) {await releaseJob(id);throw error;}
 }
 
+/**
+ * status.json is written by the worker and is authoritative once the worker leaves "running";
+ * progress.json is the last native checkpoint and keeps saying "running" after a timeout.
+ */
+export function effectiveJobState(status: { state?: string }, progress: { state?: string } | null): string {
+  const state = status.state ?? 'unknown';
+  if (state !== 'running') return state;
+  return progress?.state === 'failed' ? 'failing' : 'running';
+}
+
 export async function batchStatus(id: string) {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid job id');
   const directory = join(stateDirectory(), 'jobs', id);
   const status = JSON.parse(await fs.readFile(join(directory, 'status.json'), 'utf8'));
   let progress = null;
   try { progress = JSON.parse(await fs.readFile(join(directory, 'progress.json'), 'utf8')); } catch { /* native writer may be between writes */ }
-  return { ...status, progress, prepared_plan_path: join(directory, 'prepared-plan.json'), log_path: join(directory, 'worker.log') };
+  return { effective_state: effectiveJobState(status, progress), ...status, progress, prepared_plan_path: join(directory, 'prepared-plan.json'), log_path: join(directory, 'worker.log') };
 }

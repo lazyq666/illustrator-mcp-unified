@@ -13,6 +13,24 @@ import { runInNewContext } from 'node:vm';
 let directory: string | undefined;
 afterEach(async () => { vi.unstubAllEnvs(); if(directory) await fs.rm(directory,{recursive:true,force:true}); directory=undefined; });
 async function temp() { directory=await fs.mkdtemp(join(tmpdir(),'card-test-'));return directory; }
+const cards = readFileSync(new URL('../../src/jsx/helpers/cards.jsx', import.meta.url), 'utf8');
+
+/** Illustrator-like layers and items whose z-order reads are counted; zOrderPosition always throws (30.2.1). */
+function zTree() {
+  let reads = 0;
+  function node(typename: string, name: string, parent: any, z: number) {
+    return {
+      typename, name, parent, layers: [] as any[], pageItems: [] as any[], note: '',
+      get absoluteZOrderPosition() { reads++; return z; },
+      get zOrderPosition(): number { throw new Error('Internal error'); },
+    };
+  }
+  return {
+    reads: () => reads,
+    layer: (name: string, parent: any = { typename: 'Document' }, z = 0) => node('Layer', name, parent, z),
+    item: (typename: string, name: string, parent: any, z = 0) => node(typename, name, parent, z),
+  };
+}
 
 describe('background execution contract', () => {
   it('does not activate on the default path, including legacy activation requests', () => {
@@ -30,9 +48,52 @@ describe('background execution contract', () => {
     const root: any = { typename:'Layer', layers:[], pageItems:[] };
     const low = { name:'back', parent:root, absoluteZOrderPosition:1, get zOrderPosition(){throw new Error('Internal error');} };
     const high = { name:'front', parent:root, absoluteZOrderPosition:8, zOrderPosition:0 };
-    root.pageItems=[high,low];
-    const library=readFileSync(new URL('../../src/jsx/helpers/cards.jsx',import.meta.url),'utf8');
-    expect(runInNewContext(library+';cardChildren(root).map(function(x){return x.name;}).join(",");',{root})).toBe('front,back');
+    const sub = { typename:'Layer', name:'sub', parent:root, layers:[], pageItems:[], absoluteZOrderPosition:5, get zOrderPosition(){throw new Error('Internal error');} };
+    root.pageItems=[high,low]; root.layers=[sub];
+    expect(runInNewContext(cards+';cardChildren(root).map(function(x){return x.name;}).join(",");',{root})).toBe('front,sub,back');
+  });
+  it('reads z-order once per child, and only where sublayers and items interleave', () => {
+    // A 1,800-object template took 3.3 s and 3.3 GB per walk when every sort comparison read z-order.
+    const tree = zTree();
+    const mixed = tree.layer('mixed');
+    const items = Array.from({length:40},(_,i)=>tree.item('PathItem','item '+i,mixed,100-i*2));
+    const subs = [tree.layer('sub a',mixed,99), tree.layer('sub b',mixed,20)];
+    mixed.pageItems=items; mixed.layers=subs;
+    const order = runInNewContext(cards+';cardChildren(root).map(function(x){return x.name;});',{root:mixed});
+    expect(Array.from(order).slice(0,3)).toEqual(['item 0','sub a','item 1']);
+    expect(Array.from(order)).toContain('sub b');
+    expect(tree.reads()).toBe(42);
+  });
+  it('walks groups and single-kind layers in collection order without reading z-order', () => {
+    const tree = zTree();
+    const root = tree.layer('root'), sub = tree.layer('sub', root), group = tree.item('GroupItem', 'group', sub), nested = tree.item('GroupItem', 'nested', group);
+    root.layers=[sub];
+    sub.pageItems=[tree.item('PathItem','sub front',sub), group, tree.item('PathItem','sub back',sub)];
+    group.pageItems=[tree.item('PathItem','group front',group), nested, tree.item('PathItem','group back',group)];
+    nested.pageItems=[tree.item('PathItem','deep',nested)];
+    const visited = runInNewContext(cards+';var seen=[];cardWalk(root,function(x){seen.push(x.name);});seen;',{root});
+    expect(Array.from(visited)).toEqual(['sub','sub front','group','group front','nested','deep','group back','sub back']);
+    const each = runInNewContext(cards+';var seen=[];cardEach(root,function(x){seen.push(x.name);});seen;',{root});
+    expect(Array.from(each).sort()).toEqual(Array.from(visited).sort());
+    expect(runInNewContext(cards+';cardItem(root,"deep").name;',{root})).toBe('deep');
+    expect(tree.reads()).toBe(0);
+  });
+  it('resets copied object IDs without reading z-order, even inside mixed layers', () => {
+    const tree = zTree();
+    const layer = tree.layer('copy'), sub = tree.layer('sub', layer, 9), group = tree.item('GroupItem','group',layer,3);
+    const path = tree.item('PathItem','path',group); path.note = 'old-uuid-0000-0000-0000-000000000000|rest';
+    layer.layers=[sub]; layer.pageItems=[group]; group.pageItems=[path];
+    const context = { root: layer, extractUUIDFromNote: (note: string) => note.substring(0, 36), generateUUID: () => 'new-uuid-0000-0000-0000-000000000000' };
+    runInNewContext(cards+';cardResetIDs(root);', context);
+    expect(path.note).toBe('new-uuid-0000-0000-0000-000000000000|rest');
+    expect(tree.reads()).toBe(0);
+  });
+  it('ignores pageItems that belong to a nested container', () => {
+    const tree = zTree();
+    const root = tree.layer('root'), group = tree.item('GroupItem','group',root), inner = tree.item('PathItem','inner',group);
+    group.pageItems=[inner]; root.pageItems=[group, inner];
+    expect(runInNewContext(cards+';cardChildren(root).map(function(x){return x.name;}).join(",");',{root})).toBe('group');
+    expect(runInNewContext(cards+';var n=0;cardEach(root,function(){n++;});n;',{root})).toBe(2);
   });
   it('temporarily selects the target layer for native placement and restores state', () => {
     const original = {name:'hidden previous'};

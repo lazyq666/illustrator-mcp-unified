@@ -83,3 +83,18 @@ it('permits valid quoted properties through the whole generated wrapper and clea
   await expect(runTrustedScript({script:'return {"char":1};'})).resolves.toEqual({result:{char:1}});
   expect(await readLease()).toBeNull();await expect(fs.stat(scriptPath)).rejects.toMatchObject({code:'ENOENT'});
 });
+it('maps native error lines back to the run_script source and adds document context and code hints',async()=>{
+  vi.mocked(execFile).mockImplementation(((_file:any,_args:any,_opts:any,cb:any)=>{
+    void (async()=>{
+      const owner=(await readLease())!;
+      const lines=(await fs.readFile(owner.artifacts!.scriptPath,'utf8')).split('\n');
+      const line=lines.findIndex(text=>text.includes('tops[j].duplicate'))+1;
+      await fs.writeFile(owner.artifacts!.resultPath,JSON.stringify({error:true,message:"an Illustrator error occurred: 1346458189 ('MRAP')",line,context:{documents:2,activeDocument:'/x/source.svg'}}));
+      await fs.writeFile(owner.receipt,JSON.stringify({native_completed:true,execution_id:owner.id}));
+      cb(null,'','');
+    })().catch(e=>cb(e,'',''));return {};
+  }) as any);
+  const script=Array.from({length:10},(_,i)=>`var v${i}=${i};`).join('\n')+'\ntops[j].duplicate(group, ElementPlacement.PLACEATBEGINNING);';
+  await expect(runTrustedScript({script})).rejects.toThrow(/user script line 11: tops\[j\]\.duplicate.*active document: \/x\/source\.svg; open documents: 2.*Hint: .*GroupItem of another document/s);
+  expect(await readLease()).toBeNull();
+});

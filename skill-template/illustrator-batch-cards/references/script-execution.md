@@ -8,7 +8,8 @@
 
 | 字段 | 必须满足 |
 | --- | --- |
-| `version` | 精确等于 `1.8.0-local.1` |
+| `version` | 精确等于 `1.8.0-local.2` |
+| `revision` | 精确等于 `20261105.1` |
 | `background` | 布尔值 `true` |
 | `computer_use_fallback` | 布尔值 `false` |
 | `state_directory` | 精确等于 `@@MCP_STATE_DIRECTORY@@` |

@@ -1,5 +1,6 @@
 import { register as registerBackgroundCards } from './utility/background-cards.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { trackToolNames } from '../executor/tool-context.js';
 
 // Phase 1: 基本読み取りツール
 import { register as registerGetDocumentInfo } from './read/get-document-info.js';
@@ -43,6 +44,8 @@ import { register as registerConvertToOutlines } from './modify/convert-to-outli
 import { register as registerApplyColorProfile } from './modify/apply-color-profile.js';
 import { register as registerPlaceImage } from './modify/place-image.js';
 import { register as registerImportSvgAsEditable } from './modify/import-svg-as-editable.js';
+import { register as registerAssembleSvgs } from './modify/assemble-svgs.js';
+import { register as registerInspectSvg } from './read/inspect-svg.js';
 import { register as registerResizeForVariation } from './modify/resize-for-variation.js';
 import { register as registerAlignObjects } from './modify/align-objects.js';
 import { register as registerReplaceColor } from './modify/replace-color.js';
@@ -79,6 +82,7 @@ import { register as registerSelectObjects } from './modify/select-objects.js';
 import { register as registerConvertCoordinate } from './read/convert-coordinate.js';
 
 export function registerAllTools(server: McpServer): void {
+  trackToolNames(server);
   registerBackgroundCards(server);
   // Phase 1: 基本読み取りツール
   registerGetDocumentInfo(server);
@@ -122,6 +126,8 @@ export function registerAllTools(server: McpServer): void {
   registerApplyColorProfile(server);
   registerPlaceImage(server);
   registerImportSvgAsEditable(server);
+  registerAssembleSvgs(server);
+  registerInspectSvg(server);
   registerResizeForVariation(server);
   registerAlignObjects(server);
   registerReplaceColor(server);

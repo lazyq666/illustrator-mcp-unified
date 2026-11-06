@@ -61,3 +61,15 @@ describe('embedded JSX syntax', () => {
     });
   }
 });
+
+it('rejects line comments that ExtendScript would read as preprocessor directives', async () => {
+  const { assertExtendScriptSyntax } = await import('../../src/executor/script-syntax.js');
+  for (const script of ['//@include "x.jsx"', '  // @param value', 'var a=1;\n// @mcp-marker']) expect(() => assertExtendScriptSyntax(script, 's.jsx')).toThrow('preprocessor');
+  expect(() => assertExtendScriptSyntax('var a=1; // @ inline is fine\n/* @block */ var b=a;')).not.toThrow();
+});
+
+it('recognizes Error 8 syntax diagnostics as compile failures, even with mangled localized text', async () => {
+  const { isConfirmedCompileFailure } = await import('../../src/executor/native-failure.js');
+  expect(isConfirmedCompileFailure('Error: /x/run.scpt:275:447: execution error: Adobe Illustrator got an error: Error 8: ????.\rLine: 657\r->  // @marker (5001)\n')).toBe(true);
+  expect(isConfirmedCompileFailure('Error: /x/run.scpt:1:2: execution error: Adobe Illustrator got an error: Error 21: undefined is not an object\rLine: 3\r-> a.b (5001)\n')).toBe(false);
+});

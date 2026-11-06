@@ -18,20 +18,40 @@ function cardLayer(root, segments) {
   return layer;
 }
 
-function cardChildren(parent) {
-  var result = [], i;
+// Direct sublayers and page items, unordered: layers first, then items.
+function cardDirect(parent) {
+  var layers = [], items = [], i, count;
   if (parent.typename === "Document" || parent.typename === "Layer") {
-    for (i = 0; i < parent.layers.length; i++) result.push(parent.layers[i]);
+    count = parent.layers.length;
+    for (i = 0; i < count; i++) layers.push(parent.layers[i]);
   }
   if (parent.typename !== "Document") {
-    for (i = 0; i < parent.pageItems.length; i++) if (parent.pageItems[i].parent === parent) result.push(parent.pageItems[i]);
+    var all = parent.pageItems; count = all.length;
+    for (i = 0; i < count; i++) { var item = all[i]; if (item.parent === parent) items.push(item); }
   }
-  // 30.2.1 can throw Internal error for zOrderPosition on valid paths. The
-  // absolute property works for both sublayers and items; larger is in front.
-  result.sort(function(a,b) { return b.absoluteZOrderPosition - a.absoluteZOrderPosition; });
+  return { layers: layers, items: items };
+}
+
+// Direct children, front to back. layers and pageItems are each already in
+// stacking order (index 0 in front), so only a layer holding both sublayers and
+// items needs z-order to interleave them. 30.2.1 throws Internal error for
+// zOrderPosition on some valid paths, so that uses absoluteZOrderPosition, read
+// once per child: each read costs time and memory that grow with the document
+// and are not released, and sorting with the read inside the comparator took
+// 3.3 s and 3.3 GB to walk one 1,800-object card template.
+function cardChildren(parent) {
+  var direct = cardDirect(parent), i;
+  if (!direct.layers.length) return direct.items;
+  if (!direct.items.length) return direct.layers;
+  var keyed = [], result = [];
+  for (i = 0; i < direct.layers.length; i++) keyed.push({ item: direct.layers[i], z: direct.layers[i].absoluteZOrderPosition });
+  for (i = 0; i < direct.items.length; i++) keyed.push({ item: direct.items[i], z: direct.items[i].absoluteZOrderPosition });
+  keyed.sort(function(a,b) { return b.z - a.z; });
+  for (i = 0; i < keyed.length; i++) result.push(keyed[i].item);
   return result;
 }
 
+// Visits every descendant front to back (layers before their contents).
 function cardWalk(root, visit) {
   var children = cardChildren(root);
   for (var i = 0; i < children.length; i++) {
@@ -40,9 +60,17 @@ function cardWalk(root, visit) {
   }
 }
 
+// Visits every descendant in no particular order, without reading z-order.
+// Use it wherever order does not matter (lookups, counts, ID resets, painting).
+function cardEach(root, visit) {
+  var direct = cardDirect(root), i;
+  for (i = 0; i < direct.layers.length; i++) { visit(direct.layers[i]); cardEach(direct.layers[i], visit); }
+  for (i = 0; i < direct.items.length; i++) { visit(direct.items[i]); if (direct.items[i].typename === "GroupItem") cardEach(direct.items[i], visit); }
+}
+
 function cardItem(root, name) {
   var found = [];
-  cardWalk(root, function(item) { if (item.typename !== "Layer" && item.name === name) found.push(item); });
+  cardEach(root, function(item) { if (item.typename !== "Layer" && item.name === name) found.push(item); });
   if (found.length !== 1) throw new Error("OBJECT_NOT_UNIQUE: " + name + " (" + found.length + ")");
   return found[0];
 }
@@ -86,7 +114,7 @@ function cardResetIDs(item) {
     } catch (ignore) {}
   }
   reset(item);
-  if (item.typename === "Layer" || item.typename === "GroupItem") cardWalk(item, reset);
+  if (item.typename === "Layer" || item.typename === "GroupItem") cardEach(item, reset);
 }
 
 function cardCloneLayer(source, destination, dx, dy) {
@@ -167,7 +195,7 @@ function cardPathStats(root) {
     else if (item.typename === "PlacedItem") stats.links++;
     else if (item.typename === "TextFrame") stats.texts++;
   }
-  count(root); if (root.typename === "GroupItem" || root.typename === "Layer" || root.typename === "Document") cardWalk(root,count);
+  count(root); if (root.typename === "GroupItem" || root.typename === "Layer" || root.typename === "Document") cardEach(root,count);
   return stats;
 }
 
@@ -282,7 +310,7 @@ function cardBacking(doc, root, options) {
     try { gradient=doc.gradients.getByName(options.gradient_name); } catch (missing) { throw new Error("GRADIENT_NOT_FOUND: "+options.gradient_name); }
   } else if (!options.stops || options.stops.length < 2) throw new Error("GRADIENT_REQUIRED");
   var duplicateName = options.backing_name || options.face_name + " 衬边";
-  var collision=false; cardWalk(root,function(it){if(it.name===duplicateName)collision=true;});
+  var collision=false; cardEach(root,function(it){if(it.name===duplicateName)collision=true;});
   if(collision) throw new Error("BACKING_ALREADY_EXISTS");
   return cardUnlock(face,function() {
     if(!gradient) {
@@ -304,7 +332,7 @@ function cardBacking(doc, root, options) {
         if(item.typename==="PathItem" && !item.clipping) {item.filled=true;item.fillColor=fill;item.stroked=false;}
         else if(item.typename==="CompoundPathItem") for(var pi=0;pi<item.pathItems.length;pi++) paint(item.pathItems[pi]);
       }
-      paint(backing);if(backing.typename==="GroupItem")cardWalk(backing,paint);
+      paint(backing);if(backing.typename==="GroupItem")cardEach(backing,paint);
       backing.applyEffect('<LiveEffect name="Adobe Offset Path"><Dict data="R mlim 4 R ofst '+options.offset_pt+' I jntp 2 "/></LiveEffect>');
       backing.note="card-backing-offset:"+options.offset_pt;
       return {name:backing.name,offset_pt:options.offset_pt,gradient:gradient.name,face:stats,backing:cardPathStats(backing)};

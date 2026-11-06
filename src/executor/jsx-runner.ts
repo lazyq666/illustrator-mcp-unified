@@ -6,7 +6,8 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import pLimit from 'p-limit';
 import { backgroundMode, effectiveActivation } from './background-policy.js';
-import { acquireLease, hasCompletionReceipt } from './execution-lease.js';
+import { acquireLease, hasCompletionReceipt, startedMarkerPath } from './execution-lease.js';
+import { currentTool } from './tool-context.js';
 import { assertExtendScriptSyntax } from './script-syntax.js';
 import { nativeFailureKind } from './native-failure.js';
 import type { TempFiles } from './file-transport.js';
@@ -146,28 +147,75 @@ export interface JsxResult {
 }
 
 /**
+ * Put this comment on its own line directly before caller-supplied source so errors report its own line numbers.
+ * A block comment on purpose: ExtendScript treats line comments starting with "@" as preprocessor directives.
+ */
+export const USER_SOURCE_MARKER = '/* mcp-user-source-start */';
+
+export interface BuiltJsx {
+  code: string;
+  /** 1-based line in `code` where the tool script begins. */
+  toolStart: number;
+  /** 1-based line where caller-supplied source begins, when the tool script marks it. */
+  userStart?: number;
+}
+
+export interface JsxLineLocation { jsx_line: number; scope: 'helpers' | 'tool' | 'user'; line: number; text: string }
+
+/** Translate an ExtendScript error line in the wrapped file back to the code the caller wrote. */
+export function locateJsxLine(built: BuiltJsx, jsxLine: number): JsxLineLocation | null {
+  const lines = built.code.split('\n');
+  if (!Number.isInteger(jsxLine) || jsxLine < 1 || jsxLine > lines.length) return null;
+  const text = lines[jsxLine - 1].trim().slice(0, 200);
+  if (built.userStart !== undefined && jsxLine >= built.userStart) return { jsx_line: jsxLine, scope: 'user', line: jsxLine - built.userStart + 1, text };
+  if (jsxLine >= built.toolStart) return { jsx_line: jsxLine, scope: 'tool', line: jsxLine - built.toolStart + 1, text };
+  return { jsx_line: jsxLine, scope: 'helpers', line: jsxLine - 1, text };
+}
+
+/** Known Illustrator four-character error codes that have a reproducible, actionable cause. */
+const NATIVE_ERROR_HINTS: Record<string, string> = {
+  // Reproduced on Illustrator 30.2.1: PageItem.duplicate(<GroupItem of another document>) fails with MRAP
+  // whichever document is active; duplicating into a Layer of that document works.
+  MRAP: 'Illustrator rejected the operation target. A known cause: duplicate()/move() of an item into a GroupItem of another document. Duplicate top-level items into a Layer of the destination document first, then move them into the group within that document (or use assemble_svgs/import_svg_as_editable). Also check the destination is not locked or hidden.',
+};
+
+export function nativeErrorHint(message: string): string | undefined {
+  const code = /\('([A-Z]{4})'\)/.exec(message)?.[1];
+  return code ? NATIVE_ERROR_HINTS[code] : undefined;
+}
+
+/**
  * osascript / PowerShell COM 用 JSX ビルダー（ファイルベース I/O）
  */
-async function buildJsx(
+export async function buildJsx(
   toolScript: string,
   paramsPath: string,
   resultPath: string,
   receiptPath: string,
   executionId: string,
-): Promise<string> {
+): Promise<BuiltJsx> {
   const helpers = await getHelpers();
-  return `(function() {
+  const startedPath = startedMarkerPath({ receipt: receiptPath });
+  const head = `(function() {
 ${helpers}
 var PARAMS_PATH = ${JSON.stringify(paramsPath)};
 var RESULT_PATH = ${JSON.stringify(resultPath)};
 var MCP_BACKGROUND = ${backgroundMode() ? 'true' : 'false'};
 var JSON = { stringify: jsonStringify, parse: jsonParse };
 var __previousInteraction = app.userInteractionLevel;
+function __documentContext() {
+  var context = { documents: 0, activeDocument: null };
+  try { context.documents = app.documents.length; if (context.documents) { var d = app.activeDocument; try { context.activeDocument = d.fullName.fsName; } catch (unsaved) { context.activeDocument = d.name; } } } catch (ignored) {}
+  return context;
+}
+(function () { var marker = new File(${JSON.stringify(startedPath)}); marker.encoding = "UTF-8"; if (marker.open("w")) { marker.write(jsonStringify(__documentContext())); marker.close(); } })();
 try {
   if (MCP_BACKGROUND) app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
-${toolScript}
+`;
+  const toolStart = head.split('\n').length;
+  const code = head + `${toolScript}
 } catch (__unexpectedError) {
-  writeResultFile(RESULT_PATH, { error: true, message: String(__unexpectedError.message || __unexpectedError), line: __unexpectedError.line });
+  writeResultFile(RESULT_PATH, { error: true, message: String(__unexpectedError.message || __unexpectedError), line: __unexpectedError.line, context: __documentContext() });
 } finally {
   try { app.userInteractionLevel = __previousInteraction; } finally {
     var __receipt = new File(${JSON.stringify(receiptPath)});
@@ -176,6 +224,8 @@ ${toolScript}
   }
 }
 })();`;
+  const markerIndex = code.split('\n').findIndex((line) => line.trim() === USER_SOURCE_MARKER);
+  return { code, toolStart, userStart: markerIndex >= 0 ? markerIndex + 2 : undefined };
 }
 
 // ─── エラーメッセージ変換 ────────────────────────────────────────────────────
@@ -219,8 +269,9 @@ async function executeViaTransport(
   transport: Transport, jsxCode: string, params: unknown, timeout: number, activate: boolean,
 ): Promise<JsxResult> {
   assertExtendScriptSyntax(jsxCode);
-  const lease = await acquireLease();
+  const lease = await acquireLease({ tool: currentTool(), params, appPath: getAppPath() });
   let files: TempFiles | undefined;
+  let built: BuiltJsx | undefined;
   let submitted = false;
   let confirmed = false;
   let failure = '';
@@ -229,9 +280,9 @@ async function executeViaTransport(
     files = createTempFiles();
     await lease.update({ artifacts: files, transport });
     await writeParams(files.paramsPath, params);
-    const fullJsx = await buildJsx(jsxCode, files.paramsPath, files.resultPath, lease.record.receipt, lease.record.id);
-    assertExtendScriptSyntax(fullJsx);
-    await writeJsx(files.scriptPath, fullJsx);
+    built = await buildJsx(jsxCode, files.paramsPath, files.resultPath, lease.record.receipt, lease.record.id);
+    assertExtendScriptSyntax(built.code);
+    await writeJsx(files.scriptPath, built.code);
     if (transport === 'osascript') {
       // The process timeout below stays the authority; the AppleEvent must outlive it.
       await writeAppleScript(files.runnerPath, files.scriptPath, { activate: effectiveActivation(activate), appPath: getAppPath(), timeoutSeconds: timeout / 1000 + 30 });
@@ -252,7 +303,7 @@ async function executeViaTransport(
     });
     confirmed = true;
     failureKind = 'result_error';
-    return await readAndValidateResult(files.resultPath);
+    return await readAndValidateResult(files.resultPath, built);
   } catch (error) {
     failure = String(error);
     if (!submitted) { confirmed = true; failureKind = 'pre_execution_error'; }
@@ -266,7 +317,7 @@ async function executeViaTransport(
   }
 }
 
-async function readAndValidateResult(resultPath: string): Promise<JsxResult> {
+export async function readAndValidateResult(resultPath: string, built?: BuiltJsx): Promise<JsxResult> {
   let result: JsxResult;
   try {
     result = await readResult(resultPath) as JsxResult;
@@ -278,7 +329,16 @@ async function readAndValidateResult(resultPath: string): Promise<JsxResult> {
   if (result.error) {
     const parts: string[] = [];
     if (result.message) parts.push(result.message as string);
-    if (result.line != null) parts.push(`(JSX line ${result.line})`);
+    if (result.line != null) {
+      const location = built ? locateJsxLine(built, Number(result.line)) : null;
+      parts.push(location && location.scope !== 'helpers'
+        ? `(JSX line ${result.line}; ${location.scope === 'user' ? 'user script' : 'tool script'} line ${location.line}: ${location.text})`
+        : `(JSX line ${result.line}${location ? `; helper: ${location.text}` : ''})`);
+    }
+    const context = result.context as { documents?: number; activeDocument?: string | null } | undefined;
+    if (context) parts.push(`[active document: ${context.activeDocument ?? 'none'}; open documents: ${context.documents ?? 0}]`);
+    const hint = nativeErrorHint(String(result.message ?? ''));
+    if (hint) parts.push(`Hint: ${hint}`);
     throw new Error(parts.length > 0 ? parts.join(' ') : 'An unknown error occurred during JSX execution');
   }
   return result;

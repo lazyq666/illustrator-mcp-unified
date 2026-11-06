@@ -1,7 +1,7 @@
 import { assertExtendScriptSyntax } from './script-syntax.js';
 import { readFile } from 'node:fs/promises';
 import { assertBackgroundScript } from './background-policy.js';
-import { executeJsx } from './jsx-runner.js';
+import { executeJsx, USER_SOURCE_MARKER } from './jsx-runner.js';
 
 export async function runTrustedScript(options: {
   script?: string; script_path?: string; params?: Record<string, unknown>;
@@ -21,6 +21,7 @@ if (expected) {
 }
 try {
  var answer=(function(){
+${USER_SOURCE_MARKER}
 ${source}
  })();
  writeResultFile(RESULT_PATH, { result: answer === undefined ? null : answer });

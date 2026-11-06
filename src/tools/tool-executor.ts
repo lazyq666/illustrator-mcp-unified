@@ -17,7 +17,7 @@ export function formatToolResult(result: unknown): { content: Array<{ type: 'tex
 export async function executeToolJsx(
   jsxCode: string,
   params: unknown,
-  options?: { activate?: boolean; heavy?: boolean; resolveCoordinate?: boolean },
+  options?: { activate?: boolean; heavy?: boolean; resolveCoordinate?: boolean; timeout?: number },
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const baseParams = ensureToolParams(params);
   const resolvedParams = options?.resolveCoordinate
@@ -26,7 +26,7 @@ export async function executeToolJsx(
 
   const result = options?.heavy
     ? await executeJsxHeavy(jsxCode, resolvedParams)
-    : await executeJsx(jsxCode, resolvedParams, { activate: options?.activate ?? false });
+    : await executeJsx(jsxCode, resolvedParams, { activate: options?.activate ?? false, timeout: options?.timeout });
 
   return formatToolResult(result);
 }

@@ -1,6 +1,6 @@
 # Illustrator MCP Unified
 
-这是一个根据 [ie3jp/illustrator-mcp-server](https://github.com/ie3jp/illustrator-mcp-server) 和 [ajfonthemove/illustrator-mcp](https://github.com/ajfonthemove/illustrator-mcp) 制作的 MCP，当前工具数量 **77**。
+这是一个根据 [ie3jp/illustrator-mcp-server](https://github.com/ie3jp/illustrator-mcp-server) 和 [ajfonthemove/illustrator-mcp](https://github.com/ajfonthemove/illustrator-mcp) 制作的 MCP，当前工具数量 **81**。
 
 经过我自己的测试，在本机 **macOS（Apple Silicon）+ Adobe Illustrator 2026（30.2.1）** 上运行良好，可以在后台静默完成任务，不需要保持 Illustrator 在前台。
 
@@ -16,6 +16,7 @@
 - 按模板批量制卡：复制完整图层、替换蒙版内图片、导入可编辑 PDF 字稿、生成名称渐变衬边。
 - 保存后重新打开文件检查结构，导出预览供 AI 和用户检查。
 - 多个调用共用任务占用记录，避免同时修改文档；超时后保留记录，不盲目重跑。
+- 预检、批量组装 SVG 为可编辑路径，并在运行状态中查看占用与恢复信息。
 
 工具清单见 [docs/TOOLS.md](docs/TOOLS.md)。
 
@@ -34,7 +35,7 @@ npm run verify
 npm run configure
 ```
 
-`build` 把源码生成可运行程序；`verify` 检查 MCP 连接、77 个工具和后台配置，不修改 Illustrator 文档。`configure` 根据这台电脑的实际路径生成连接配置，也不会修改你的个人设置。
+`build` 把源码生成可运行程序；`verify` 检查 MCP 连接、81 个工具和后台配置，不修改 Illustrator 文档。`configure` 根据这台电脑的实际路径生成连接配置，也不会修改你的个人设置。
 
 如果安装了多个 Illustrator 版本，可明确选择：
 
@@ -87,8 +88,8 @@ npm run configure -- --app "/Applications/Adobe Illustrator 2026/Adobe Illustrat
 
 | 字段 | 预期 |
 | --- | --- |
-| `version` | `1.8.0-local.1` |
-| `revision` | `20261016.1` |
+| `version` | `1.8.0-local.2` |
+| `revision` | `20261105.1` |
 | `background` | `true` |
 | `computer_use_fallback` | `false` |
 | `state_directory` | 配置中指定的 `var` 目录 |
@@ -113,7 +114,7 @@ npm run configure -- --app "/Applications/Adobe Illustrator 2026/Adobe Illustrat
 npm run check
 ```
 
-当前源码包含 229 个自动测试，另有 MCP 连接和工具数量检查。开发过程中在上述本机环境验证过后台保存、重开、导出、两张卡的批量生成，以及锁屏期间继续执行。这些测试不代表 77 个工具、所有模板和所有 Illustrator 版本均已完整验证。
+当前源码包含自动测试，另有 MCP 连接和工具数量检查。开发过程中在上述本机环境验证过后台保存、重开、导出、两张卡的批量生成，以及锁屏期间继续执行。这些测试不代表 81 个工具、所有模板和所有 Illustrator 版本均已完整验证。
 
 2026-10-30 更新：批量制卡默认每 4 张保存、关闭并重开同一输出文件，最终保存默认保留 PDF 兼容性；长任务的 AppleScript 等待时间随执行超时延长。新增分组流程已覆盖自动测试，尚未在真实 Illustrator 中验证。
 

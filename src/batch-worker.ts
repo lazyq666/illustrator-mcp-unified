@@ -31,7 +31,8 @@ try {
   const validation = await executeCardScript('writeResultFile(RESULT_PATH, cardValidate(params));', { ...plan, preview_directory: illustratorPath(previews) }, Math.min(600_000, 60_000 + plan.cards.length * 10_000));
   await atomicJSON(join(directory, 'status.json'), { id, state: validation.structural_passed ? 'ready_for_visual_review' : 'validation_failed', started_at: started, finished_at: new Date().toISOString(), generated, validation });
 } catch (error) {
-  const lease = await readLease().catch(() => ({ phase: 'uncertain' }));
-  await atomicJSON(join(directory, 'status.json'), { id, state: lease?.phase === 'uncertain' ? 'execution_unconfirmed' : 'failed', started_at: started, finished_at: new Date().toISOString(), error: String(error) });
+  const lease = await readLease().catch(() => ({ phase: 'uncertain' as const, id: undefined }));
+  const unconfirmed = lease?.phase === 'uncertain';
+  await atomicJSON(join(directory, 'status.json'), { id, state: unconfirmed ? 'execution_unconfirmed' : 'failed', ...(unconfirmed && lease.id ? { execution_id: lease.id } : {}), started_at: started, finished_at: new Date().toISOString(), error: String(error) });
   process.exitCode = 1;
 } finally { cleanupTmpDirSync(); await releaseJob(id); }
